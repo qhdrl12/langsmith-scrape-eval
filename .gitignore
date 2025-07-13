@@ -63,3 +63,6 @@ coverage.xml
 
 # pyenv
 .python-version
+
+# Evaluation results
+inference_results/

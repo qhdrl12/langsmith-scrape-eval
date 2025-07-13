@@ -67,17 +67,29 @@ This will run evaluations with both a dummy model (no API calls) and OpenAI mode
 langsmith-scape-eval/
 ├── src/langsmith_scape_eval/
 │   ├── __init__.py
-│   ├── dataset_creator.py      # Dataset creation utilities
-│   └── evaluators.py           # Custom evaluation metrics
+│   ├── dataset_creator.py              # Dataset creation utilities  
+│   ├── evaluators.py                   # Basic Q&A evaluation metrics
+│   ├── scrape_langsmith_evaluators.py  # Universal tool evaluators (main)
+│   └── scrape_evaluator.py             # Standalone evaluation runner
 ├── examples/
-│   └── simple_evaluation.py    # Example evaluation workflow
-├── .env.example                # Environment template
-├── pyproject.toml             # Project dependencies
-└── README.md                  # This file
+│   ├── simple_evaluation.py            # Basic Q&A evaluation workflow
+│   └── langsmith_scraping_evaluation.py # Tool-based agent evaluation
+├── .env.example                        # Environment template
+├── pyproject.toml                     # Project dependencies 
+└── README.md                          # This file
 ```
 
 ## 🔍 Available Evaluators
 
+### Universal Tool Evaluators (Main)
+| Evaluator | Score | Description | Use Case |
+|-----------|-------|-------------|----------|
+| **Tool Selection** | 100 pts | Evaluates tool choice appropriateness | LangGraph agents with tool calling |
+| **Tool Execution** | 100 pts | Assesses tool execution quality and success rate | Tool-based workflows |
+| **Data Extraction** | 100 pts | Measures data collection effectiveness | Scraping, API, search agents |
+| **Answer Quality** | 100 pts | Evaluates final response quality | Any agent producing final answers |
+
+### Basic Q&A Evaluators
 | Evaluator | Description | Use Case |
 |-----------|-------------|----------|
 | **Exact Match** | Strict string comparison | Factual questions with single correct answers |
@@ -105,46 +117,78 @@ qa_pairs = [
 dataset_id = creator.create_qa_dataset("my-custom-dataset", qa_pairs)
 ```
 
-### Running Custom Evaluations
+### Running Tool-Based Agent Evaluations
+
+```python
+from langsmith.evaluation import evaluate
+from langsmith_scape_eval.scrape_langsmith_evaluators import get_tool_evaluators
+
+def my_langgraph_agent(inputs):
+    # Your LangGraph agent implementation
+    query = inputs["query"]
+    # Execute agent and return structured output
+    return {
+        "final_answer": "Agent's final response",
+        "agent_messages": [/* LangGraph message array */],
+        "execution_time": 2.5
+    }
+
+# Run evaluation with universal tool evaluators
+evaluators = get_tool_evaluators()  # 4 evaluators, 400 total points
+results = evaluate(
+    my_langgraph_agent,
+    data="agent-evaluation-dataset", 
+    evaluators=evaluators,
+    experiment_prefix="tool-agent-eval"
+)
+```
+
+### Running Basic Q&A Evaluations
 
 ```python
 from langsmith.evaluation import evaluate
 from langsmith_scape_eval.evaluators import get_default_evaluators
 
-def my_model(inputs):
-    # Your model implementation
+def my_qa_model(inputs):
+    # Your Q&A model implementation
     question = inputs["question"]
     # Process question and return answer
     return {"answer": "Your model's response"}
 
-# Run evaluation
+# Run evaluation with basic evaluators
 evaluators = get_default_evaluators()
 results = evaluate(
-    my_model,
-    data="my-custom-dataset",
+    my_qa_model,
+    data="qa-dataset",
     evaluators=evaluators,
-    experiment_prefix="my-experiment"
+    experiment_prefix="qa-experiment"
 )
 ```
 
 ### Using Individual Evaluators
 
 ```python
+# Tool evaluators for specific aspects
+from langsmith_scape_eval.scrape_langsmith_evaluators import (
+    tool_selection_evaluator,
+    data_extraction_evaluator
+)
+
+# Basic Q&A evaluators  
 from langsmith_scape_eval.evaluators import (
     exact_match_evaluator,
-    contains_answer_evaluator,
     numeric_accuracy_evaluator
 )
 
-# Use specific evaluators
+# Use specific evaluators for targeted evaluation
 selected_evaluators = [
-    exact_match_evaluator,
-    numeric_accuracy_evaluator
+    tool_selection_evaluator,  # Only evaluate tool selection (100 pts)
+    data_extraction_evaluator  # Only evaluate data extraction (100 pts)
 ]
 
 results = evaluate(
-    my_model,
-    data="math-dataset",
+    my_agent,
+    data="agent-dataset",
     evaluators=selected_evaluators
 )
 ```
