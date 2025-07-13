@@ -48,7 +48,7 @@ async def run_scraping_agent(inputs: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         Dict containing:
             - final_answer: 에이전트의 최종 답변
-            - agent_messages: 에이전트 메시지 리스트 (도구 호출 포함)
+            - messages: 원본 에이전트 메시지 리스트 (도구 호출 포함)
             - execution_time: 실행 시간
     """
     try:
@@ -56,7 +56,7 @@ async def run_scraping_agent(inputs: Dict[str, Any]) -> Dict[str, Any]:
         if not query:
             return {
                 "final_answer": "질문이 제공되지 않았습니다.",
-                "agent_messages": [],
+                "messages": [],
                 "execution_time": 0
             }
         
@@ -66,7 +66,6 @@ async def run_scraping_agent(inputs: Dict[str, Any]) -> Dict[str, Any]:
         
         # 새로운 스레드 생성
         thread = await client.threads.create()
-        session_id = thread["thread_id"]
         start_time = time.time()
         
         # 에이전트 실행용 메시지 구성
@@ -79,7 +78,7 @@ async def run_scraping_agent(inputs: Dict[str, Any]) -> Dict[str, Any]:
         
         # 결과 저장용 변수
         final_answer = ""
-        agent_messages = []
+        messages = []
         
         # 에이전트 실행 및 스트림 처리
         async for chunk in client.runs.stream(
@@ -91,9 +90,9 @@ async def run_scraping_agent(inputs: Dict[str, Any]) -> Dict[str, Any]:
             if chunk.event == "updates":
                 # Agent 메시지 처리
                 if "agent" in chunk.data:
-                    messages = chunk.data.get("agent", {}).get("messages", [])
-                    for msg in messages:
-                        agent_messages.append(msg)
+                    agent_msgs = chunk.data.get("agent", {}).get("messages", [])
+                    for msg in agent_msgs:
+                        messages.append(msg)
                         # 내용이 있는 마지막 agent 메시지를 final_answer로 저장
                         if msg.get("content"):
                             final_answer = msg.get("content", "")
@@ -102,28 +101,24 @@ async def run_scraping_agent(inputs: Dict[str, Any]) -> Dict[str, Any]:
                 if "tools" in chunk.data:
                     tool_messages = chunk.data.get("tools", {}).get("messages", [])
                     for tool_msg in tool_messages:
-                        tool_result_msg = {
-                            "type": "tool",
-                            "name": tool_msg.get("name", "unknown_tool"),
-                            "tool_call_id": tool_msg.get("tool_call_id", "no_id"),
-                            "content": tool_msg.get("content", ""),
-                            "status": tool_msg.get("status", "unknown")
-                        }
-                        agent_messages.append(tool_result_msg)
+                        messages.append(tool_msg)
         
         end_time = time.time()
         execution_time = end_time - start_time
         
+        print(f"final_answer: {final_answer}")
+        print(f"messages: {messages}")
+
         return {
             "final_answer": final_answer,
-            "agent_messages": agent_messages,
+            "messages": messages,
             "execution_time": execution_time
         }
         
     except Exception as e:
         return {
             "final_answer": f"에이전트 실행 중 오류 발생: {str(e)}",
-            "agent_messages": [],
+            "messages": [],
             "execution_time": 0
         }
 

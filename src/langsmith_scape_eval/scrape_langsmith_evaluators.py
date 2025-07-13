@@ -11,7 +11,7 @@ LangSmith 평가 프레임워크와 호환되며, 다양한 도메인에서 재�
 4. 최종 답변의 품질과 유용성
 
 입력 형식:
-- run.outputs.agent_messages: LangGraph 표준 메시지 배열
+- run.outputs.messages: LangGraph 표준 메시지 배열
 - run.outputs.final_answer: 에이전트 최종 답변
 - example.inputs.query: 사용자 질문
 """
@@ -36,22 +36,7 @@ EVALUATION_CONFIG = {
     "llm_temperature": 0.1,
 }
 
-# 도구 타입 분류 키워드 (확장 가능)
-TOOL_TYPE_KEYWORDS = {
-    "scraping": ["scrape", "extract", "parse"],
-    "crawling": ["crawl", "fetch", "browse"],
-    "search": ["search", "query", "find"],
-    "api": ["api", "request", "call"],
-}
 
-# 에러 감지 키워드 (확장 가능)
-ERROR_KEYWORDS = [
-    "error", "오류", "failed", "실패", "not found", "찾을 수 없",
-    "access denied", "접근 거부", "timeout", "시간 초과",
-    "internal server error", "서버 오류", "dns resolution failed",
-    "connection failed", "unsupported parameter", "invalid url",
-    "forbidden", "403", "404", "500", "페이지를 찾을 수 없습니다"
-]
 
 # =====================================================================================
 # 기본 모델과 유틸리티 함수들
@@ -63,12 +48,12 @@ class EvaluationResponse(BaseModel):
     reason: str
 
 
-def extract_tool_calls_from_messages(agent_messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def extract_tool_calls_from_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    LangGraph agent_messages에서 도구 호출 정보를 추출
+    LangGraph messages에서 도구 호출 정보를 추출
     
     Args:
-        agent_messages: LangGraph의 표준 메시지 배열
+        messages: LangGraph의 표준 메시지 배열
         
     Returns:
         추출된 도구 호출 정보 리스트 (tool_name, input_args, output_result, tool_status 포함)
@@ -77,7 +62,7 @@ def extract_tool_calls_from_messages(agent_messages: List[Dict[str, Any]]) -> Li
     tool_call_map = {}
     
     # 1단계: 도구 호출 요청 수집
-    for msg in agent_messages:
+    for msg in messages:
         if msg.get('tool_calls'):
             for tool_call in msg['tool_calls']:
                 tool_id = tool_call.get('id', '')
@@ -90,7 +75,7 @@ def extract_tool_calls_from_messages(agent_messages: List[Dict[str, Any]]) -> Li
                     }
     
     # 2단계: 도구 실행 결과 수집
-    for msg in agent_messages:
+    for msg in messages:
         if msg.get('type') == 'tool':
             tool_id = msg.get('tool_call_id', '')
             content = msg.get('content', '')
@@ -143,30 +128,8 @@ def evaluate_with_llm(prompt: str, evaluator_name: str) -> tuple[float, str]:
         return 0.0, f"평가 중 오류 발생: {str(e)}"
 
 
-def classify_tools_by_type(tool_calls: List[Dict[str, Any]]) -> Dict[str, int]:
-    """도구를 타입별로 분류하여 개수 반환"""
-    counts = {tool_type: 0 for tool_type in TOOL_TYPE_KEYWORDS.keys()}
-    counts["other"] = 0
-    
-    for tool_call in tool_calls:
-        tool_name = tool_call['tool_name'].lower()
-        classified = False
-        
-        for tool_type, keywords in TOOL_TYPE_KEYWORDS.items():
-            if any(keyword in tool_name for keyword in keywords):
-                counts[tool_type] += 1
-                classified = True
-                break
-        
-        if not classified:
-            counts["other"] += 1
-    
-    return counts
 
 
-def has_errors_in_output(output: str) -> bool:
-    """출력에서 에러 감지"""
-    return any(error_keyword in output.lower() for error_keyword in ERROR_KEYWORDS)
 
 
 # =====================================================================================
@@ -183,23 +146,21 @@ def tool_selection_evaluator(run, example) -> Dict[str, Any]:
     try:
         # 기본 데이터 추출
         query = example.inputs.get("query", "")
-        agent_messages = run.outputs.get("agent_messages", [])
+        messages = run.outputs.get("messages", [])
         
-        if not query or not agent_messages:
+        if not query or not messages:
             return {"score": 0, "reason": "필수 데이터가 누락되었습니다."}
         
         # 도구 호출 정보 추출 및 분석
-        tool_calls = extract_tool_calls_from_messages(agent_messages)
+        tool_calls = extract_tool_calls_from_messages(messages)
         if not tool_calls:
             return {"score": 0, "reason": "도구 호출이 없습니다."}
         
-        tool_type_counts = classify_tools_by_type(tool_calls)
-        
-        print(f"🔧 도구 호출: {len(tool_calls)}개 ({tool_type_counts})")
+        print(f"🔧 도구 호출: {len(tool_calls)}개")
         
         # LLM 평가 프롬프트
         prompt = f"""
-사용자 질문에 대한 도구 선택 및 호출의 적절성을 평가해주세요.
+스크래핑 에이전트의 도구 선택 및 호출 전략을 평가해주세요.
 
 **사용자 질문**: {query}
 
@@ -207,16 +168,21 @@ def tool_selection_evaluator(run, example) -> Dict[str, Any]:
 {json.dumps(tool_calls, ensure_ascii=False, indent=2)}
 
 **평가 기준 (총 100점)**:
-1. **도구 선택 적절성** (30점): 질문에 맞는 올바른 도구 선택
-2. **URL/파라미터 정확성** (30점): 올바른 URL 구성 및 파라미터 설정
-3. **호출 효율성** (20점): 중복 호출 방지 및 논리적 순서
-4. **전략적 다양성** (20점): 다각도 정보 수집 전략
+1. **쇼핑 도메인 적합성** (30점): 무신사 등 쇼핑몰 검색에 적절한 도구/URL 선택
+2. **검색 전략의 정확성** (30점): 사용자 쿼리에 맞는 카테고리/키워드로 올바른 URL 구성
+3. **호출 효율성** (20점): 중복 호출 방지, 논리적 탐색 순서
+4. **다각도 정보 수집** (20점): 상품 정보를 위한 다양한 접근 방식 시도
 
-**엄격한 채점 기준**:
-- 질문과 무관한 도구/사이트: 해당 영역 0점
-- 완전히 틀린 URL이나 카테고리: 해당 영역 0점  
-- 동일한 도구+URL 중복 호출: 효율성 0점
-- 모든 도구 실행 실패: 최대 30점
+**스크래핑 특화 채점 기준**:
+- 쇼핑몰이 아닌 사이트 접근: 도메인 적합성 0점
+- 잘못된 상품 카테고리나 검색어: 전략 정확성 0점  
+- 동일 URL 반복 호출: 효율성 0점
+- 상품 정보와 무관한 페이지 접근: 정보 수집 0점
+- 검색 결과가 아닌 메인 페이지만 접근: 전략 정확성 최대 50%
+
+**보너스 요소**:
+- 카테고리별 다양한 검색 시도: +5점
+- 필터링이나 정렬 옵션 활용: +5점
 
 0-100점 사이의 점수와 구체적인 근거를 제시해주세요.
         """
@@ -227,8 +193,7 @@ def tool_selection_evaluator(run, example) -> Dict[str, Any]:
             "score": score,
             "reason": reason,
             "metadata": {
-                "tool_count": len(tool_calls),
-                "tool_types": tool_type_counts
+                "tool_count": len(tool_calls)
             }
         }
         
@@ -246,50 +211,44 @@ def tool_execution_evaluator(run, example) -> Dict[str, Any]:
     try:
         # 기본 데이터 추출
         query = example.inputs.get("query", "")
-        agent_messages = run.outputs.get("agent_messages", [])
+        messages = run.outputs.get("messages", [])
         
-        if not query or not agent_messages:
+        if not query or not messages:
             return {"score": 0, "reason": "필수 데이터가 누락되었습니다."}
         
         # 도구 호출 정보 추출 및 분석
-        tool_calls = extract_tool_calls_from_messages(agent_messages)
+        tool_calls = extract_tool_calls_from_messages(messages)
         if not tool_calls:
             return {"score": 0, "reason": "도구 호출이 없습니다."}
         
-        # 실행 통계 계산
-        status_counts = {}
-        error_count = 0
-        
-        for tool_call in tool_calls:
-            status = tool_call['tool_status']
-            status_counts[status] = status_counts.get(status, 0) + 1
-            
-            if has_errors_in_output(tool_call['output_result']):
-                error_count += 1
-        
-        print(f"🚀 실행 상태: {status_counts}, 오류: {error_count}/{len(tool_calls)}개")
+        print(f"🚀 도구 실행: {len(tool_calls)}개")
         
         # LLM 평가 프롬프트
         prompt = f"""
-도구 실행의 품질과 성공률을 평가해주세요.
+스크래핑 도구 실행의 품질과 성공률을 평가해주세요.
 
 **사용자 질문**: {query}
 
 **도구 실행 데이터**:
 {json.dumps(tool_calls, ensure_ascii=False, indent=2)}
 
-**실행 통계**: 상태 분포 {status_counts}, 오류 {error_count}/{len(tool_calls)}개
 
 **평가 기준 (총 100점)**:
-1. **실행 성공률** (40점): 도구가 정상적으로 실행되었는가?
-2. **데이터 수집 품질** (30점): 의미있는 데이터를 수집했는가?
-3. **오류 처리** (20점): 오류가 적고 적절히 처리되었는가?
-4. **결과 완성도** (10점): 수집된 데이터의 완성도
+1. **스크래핑 성공률** (40점): 웹페이지가 정상적으로 로드되고 파싱되었는가?
+2. **상품 데이터 수집 품질** (30점): 실제 상품 정보(이름, 가격, 브랜드 등)를 수집했는가?
+3. **오류 대응력** (20점): 접근 거부, 404 등의 오류에 적절히 대응했는가?
+4. **데이터 완성도** (10점): 수집된 HTML/JSON이 완전하고 구조화되어 있는가?
 
-**엄격한 채점 기준**:
-- "called" 상태(실행 미완료): 성공률 0점
-- 오류 메시지만 있는 경우: 해당 영역 0점
-- 빈 결과나 무의미한 데이터: 품질 0-20점
+**스크래핑 특화 채점 기준**:
+- 403/404/500 등 HTTP 오류: 성공률 대폭 감점
+- 빈 페이지나 로딩 실패: 품질 0점
+- 상품 목록이 아닌 일반 페이지 수집: 품질 최대 30%
+- 반복적인 접근 실패 시 대안 시도 없음: 대응력 0점
+- 로봇 차단이나 보안 정책으로 인한 차단: 대응력 감점
+
+**보너스 요소**:
+- 차단 회피를 위한 헤더 설정이나 딜레이 적용: +5점
+- 여러 페이지나 카테고리에서 안정적인 수집: +5점
 
 0-100점 사이의 점수와 구체적인 근거를 제시해주세요.
         """
@@ -300,8 +259,6 @@ def tool_execution_evaluator(run, example) -> Dict[str, Any]:
             "score": score,
             "reason": reason,
             "metadata": {
-                "status_distribution": status_counts,
-                "error_count": error_count,
                 "total_tools": len(tool_calls)
             }
         }
@@ -320,47 +277,45 @@ def data_extraction_evaluator(run, example) -> Dict[str, Any]:
     try:
         # 기본 데이터 추출
         query = example.inputs.get("query", "")
-        agent_messages = run.outputs.get("agent_messages", [])
+        messages = run.outputs.get("messages", [])
         
-        if not query or not agent_messages:
+        if not query or not messages:
             return {"score": 0, "reason": "필수 데이터가 누락되었습니다."}
         
         # 도구 호출 정보 추출
-        tool_calls = extract_tool_calls_from_messages(agent_messages)
+        tool_calls = extract_tool_calls_from_messages(messages)
         if not tool_calls:
             return {"score": 0, "reason": "도구 호출이 없습니다."}
         
-        # 데이터 추출 통계
-        total_data_length = sum(len(tc['output_result']) for tc in tool_calls)
-        successful_extractions = sum(1 for tc in tool_calls 
-                                   if tc['tool_status'] == 'success' and 
-                                   len(tc['output_result']) > 0 and 
-                                   not has_errors_in_output(tc['output_result']))
-        
-        print(f"📊 데이터 추출: {successful_extractions}/{len(tool_calls)}개 성공, 총 {total_data_length:,} 문자")
+        print(f"📊 데이터 추출: {len(tool_calls)}개")
         
         # LLM 평가 프롬프트
         prompt = f"""
-수집된 데이터의 품질과 추출 효과성을 평가해주세요.
+스크래핑으로 수집된 상품 데이터의 품질과 추출 효과성을 평가해주세요.
 
 **사용자 질문**: {query}
 
 **추출 데이터**:
 {json.dumps(tool_calls, ensure_ascii=False, indent=2)}
 
-**추출 통계**: {successful_extractions}/{len(tool_calls)}개 성공, 총 {total_data_length:,} 문자
 
 **평가 기준 (총 100점)**:
-1. **데이터 관련성** (40점): 질문과 관련된 유용한 데이터가 추출되었는가?
-2. **데이터 완성도** (30점): 충분하고 의미있는 정보가 포함되어 있는가?
-3. **구조화 품질** (20점): 데이터가 잘 구조화되어 있는가?
-4. **정확성** (10점): 추출된 정보가 정확한가?
+1. **상품 정보 관련성** (40점): 질문한 상품 유형과 일치하는 데이터를 추출했는가?
+2. **상품 데이터 완성도** (30점): 상품명, 가격, 브랜드, 이미지 등 핵심 정보가 포함되었는가?
+3. **데이터 구조화 품질** (20점): HTML에서 구조화된 상품 정보를 잘 추출했는가?
+4. **정보 정확성** (10점): 추출된 상품 정보가 정확하고 신뢰할 수 있는가?
 
-**엄격한 채점 기준**:
-- 질문과 무관한 데이터: 관련성 0점
-- 오류 메시지나 빈 데이터: 완성도 0점
-- 원시 HTML만 있는 경우: 구조화 0-10점
-- 길이보다는 실제 유용성으로 평가
+**쇼핑 스크래핑 특화 채점 기준**:
+- 검색한 상품과 다른 카테고리 데이터: 관련성 0점
+- 상품 목록이 없거나 일반 페이지 내용만: 완성도 0점
+- 단순 HTML 덤프 (상품 정보 추출 없음): 구조화 0-10점
+- 품절 상품만 수집하거나 가격 정보 누락: 정확성 감점
+- 중복된 상품이나 광고성 콘텐츠: 완성도 감점
+
+**고품질 상품 데이터 보너스**:
+- 다양한 브랜드/가격대 상품 수집: +5점
+- 상품 상세 정보(리뷰, 평점, 옵션 등) 포함: +5점
+- 할인 정보나 재고 상태 정보 포함: +3점
 
 0-100점 사이의 점수와 구체적인 근거를 제시해주세요.
         """
@@ -371,9 +326,7 @@ def data_extraction_evaluator(run, example) -> Dict[str, Any]:
             "score": score,
             "reason": reason,
             "metadata": {
-                "successful_extractions": successful_extractions,
-                "total_data_length": total_data_length,
-                "extraction_rate": successful_extractions / len(tool_calls) if tool_calls else 0
+                "total_tools": len(tool_calls)
             }
         }
         
@@ -403,7 +356,7 @@ def answer_quality_evaluator(run, example) -> Dict[str, Any]:
         
         # LLM 평가 프롬프트
         prompt = f"""
-최종 답변의 품질과 유용성을 평가해주세요.
+스크래핑 에이전트의 최종 상품 추천 답변 품질을 평가해주세요.
 
 **사용자 질문**: {query}
 
@@ -411,20 +364,24 @@ def answer_quality_evaluator(run, example) -> Dict[str, Any]:
 {final_answer}
 
 **평가 기준 (총 100점)**:
-1. **질문 적합성** (30점): 질문에 직접적으로 답변하고 있는가?
-2. **정보 유용성** (25점): 실제로 도움이 되는 구체적인 정보를 제공하는가?
-3. **답변 완성도** (25점): 충분히 상세하고 완성된 답변인가?
-4. **사용자 도움도** (20점): 사용자의 문제 해결에 실질적으로 도움이 되는가?
+1. **쇼핑 질문 적합성** (30점): 요청한 상품에 대한 구체적인 추천을 제공하는가?
+2. **상품 정보 유용성** (25점): 상품명, 브랜드, 가격 등 구매 결정에 필요한 정보를 제공하는가?
+3. **추천 답변 완성도** (25점): 여러 옵션 제시, 비교 정보, 구매 가이드 등이 포함되었는가?
+4. **실용적 도움도** (20점): 실제 구매로 이어질 수 있는 실질적인 도움을 제공하는가?
 
-**대폭 감점 요소**:
-- 사과하며 회피하는 답변: 해당 영역 0점
-- "다른 곳에서 확인하세요" 식의 책임 회피: 적합성 0점
-- 일반론만 나열하고 구체적 정보 없음: 유용성 0-10점
-- 짧고 성의없는 답변: 완성도 0-10점
+**쇼핑 추천 특화 감점 요소**:
+- "죄송합니다, 찾을 수 없습니다" 식 회피: 적합성 0점
+- "직접 검색해보세요" 같은 책임 전가: 도움도 0점
+- 상품명 없이 일반적 쇼핑 조언만: 유용성 0-15점
+- 가격이나 브랜드 정보 없는 추천: 완성도 감점
+- 품절/단종 상품만 추천: 실용성 감점
+- 요청과 다른 카테고리 상품 추천: 적합성 대폭 감점
 
-**보너스 요소**:
-- 구체적인 추천이나 비교 정보 제공: +10점
-- 체계적이고 구조화된 답변: +5점
+**고품질 쇼핑 추천 보너스**:
+- 구체적인 상품명과 브랜드로 3개 이상 추천: +10점
+- 가격대별 또는 스타일별 분류된 추천: +8점
+- 할인 정보나 구매 팁 제공: +5점
+- 무신사 링크나 구매 방법 안내: +3점
 
 0-100점 사이의 점수와 구체적인 근거를 제시해주세요.
         """
