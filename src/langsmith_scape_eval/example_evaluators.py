@@ -10,9 +10,8 @@ and are decorated with @run_evaluator to integrate properly with the system.
 """
 
 import re
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from langsmith.evaluation import run_evaluator
-from langchain.schema import BaseOutputParser
 from langchain_openai import ChatOpenAI
 
 
