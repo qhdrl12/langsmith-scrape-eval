@@ -57,7 +57,8 @@ async def run_scraping_agent(inputs: Dict[str, Any]) -> Dict[str, Any]:
     """
     try:
         # Extract query from inputs
-        query = inputs.get("query", "")
+        print(f"run_scraping_agent: {inputs}")
+        query = inputs.get("question", "")
         if not query:
             return {
                 "final_answer": "질문이 제공되지 않았습니다.",
@@ -225,7 +226,7 @@ async def main():
         print("   LLM 기반 평가자가 제한될 수 있습니다.")
     
     # Step 2: Load dataset (do not create)
-    dataset_name = "shopping_agent_dataset"  # Default dataset name (updated naming)
+    dataset_name = "shopping_agent_dataset_new"  # Default dataset name (updated naming)
     try:
         dataset_id = load_dataset(dataset_name)
     except Exception as e:
@@ -243,7 +244,7 @@ async def main():
     print(f"   - 실험명: {experiment_name}")
     print(f"   - 데이터셋: {dataset_name}")
     print(f"   - 평가자 수: {len(evaluators)}")
-    print(f"   - 동시 실행 수: 1 (에이전트 부하 고려)")
+    print(f"   - 동시 실행 수: 10 (비동기 배치 처리)")
     
     # Step 5: Execute evaluation
     print(f"\n⏳ 평가 실행 중...")
@@ -253,13 +254,13 @@ async def main():
             """Synchronous wrapper for the async agent function."""
             return asyncio.run(run_scraping_agent(inputs))
         
-        # Run LangSmith evaluation
+        # Run LangSmith evaluation with optimized concurrency
         results = evaluate(
             sync_run_scraping_agent,      # Function to evaluate
             data=dataset_name,            # Dataset name or ID
             evaluators=evaluators,        # List of evaluators
             experiment_prefix=experiment_name,  # Experiment name
-            max_concurrency=1,            # Concurrent executions (conservative for agent load)
+            max_concurrency=10,           # Increased concurrency for better performance
             description="스크래핑/크롤링 에이전트 성능 평가"
         )
         
@@ -282,7 +283,7 @@ async def main():
             
             if all_scores:
                 avg_score = sum(all_scores) / len(all_scores)
-                print(f"📈 평균 총점: {avg_score:.1f}/400 (4개 평가자 합계)")
+                print(f"📈 평균 총점: {avg_score:.1f}/300 (3개 평가자 합계)")
         
         print(f"\n💡 팁: LangSmith 대시보드에서 상세한 평가 결과를 확인하세요!")
         
@@ -311,9 +312,9 @@ def run_single_evaluation():
         print("=" * 30)
         
         # Test query
-        test_input = {"query": "남자 셔츠 추천"}
+        test_input = {"question": "남자 셔츠 추천"}
         
-        print(f"📝 테스트 쿼리: {test_input['query']}")
+        print(f"📝 테스트 쿼리: {test_input['question']}")
         
         # Execute agent
         result = await run_scraping_agent(test_input)

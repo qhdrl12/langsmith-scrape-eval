@@ -141,13 +141,12 @@ class DatasetManager:
         """
         examples = []
         for query_data in queries:
+            query = query_data.pop("query")
+
             example = {
-                "inputs": {"query": query_data["query"]},
-                "outputs": {
-                    "expected_info": query_data.get("expected_info", ""),
-                    "validation_criteria": query_data.get("validation_criteria", []),
-                    "domain": domain
-                }
+                "inputs": {"question": query},
+                "outputs": {"answer": "-"},
+                "metadata": query_data
             }
             examples.append(example)
         
