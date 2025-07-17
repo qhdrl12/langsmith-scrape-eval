@@ -176,7 +176,7 @@ def load_dataset(dataset_name: str) -> str:
         if info.get('sample_examples'):
             print(f"📝 첫 번째 예제:")
             first_example = info['sample_examples'][0]
-            print(f"   - Query: {first_example['inputs'].get('query', 'N/A')}")
+            print(f"   - Query: {first_example['inputs'].get('question', 'N/A')}")
             print(f"   - Expected Info: {first_example['outputs'].get('expected_info', 'N/A')}")
         
         return info['id']
